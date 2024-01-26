@@ -16,7 +16,8 @@ import (
 )
 
 type SlackRequestBody struct {
-	Text string `json:"text"`
+	Text    string `json:"text"`
+	Channel string `json:"channel"`
 }
 
 func main() {
@@ -34,6 +35,12 @@ func main() {
 	webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
 	if webhookURL == "" {
 		log.Println("Error: SLACK_WEBHOOK_URL environment variable not set")
+		return
+	}
+
+	slackChannel := os.Getenv("SLACK_CHANNEL")
+	if slackChannel == "" {
+		log.Println("Error: SLACK_CHANNEL environment variable not set")
 		return
 	}
 
@@ -63,14 +70,14 @@ func main() {
 		clustersString = openEmoji + " *Friday test cluster cleanup reminder!* " + closeEmoji + " \n \n Please delete your test clusters before signing off for the weekend! \n ```" + clustersString + "```"
 	}
 
-	err = SendSlackNotification(webhookURL, clustersString)
+	err = SendSlackNotification(webhookURL, clustersString, slackChannel)
 	if err != nil {
 		log.Println("Error sending slack notification,", err)
 	}
 }
 
-func SendSlackNotification(webhookUrl string, msg string) error {
-	slackBody, _ := json.Marshal(SlackRequestBody{Text: msg})
+func SendSlackNotification(webhookUrl string, msg string, channel string) error {
+	slackBody, _ := json.Marshal(SlackRequestBody{Text: msg, Channel: channel})
 	req, err := http.NewRequest(http.MethodPost, webhookUrl, bytes.NewBuffer(slackBody))
 	if err != nil {
 		return err
