@@ -1,57 +1,53 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
+	"context"
 	"log"
-	"net/http"
-	"os"
-	"strings"
-	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/eks"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/eks"
+	"github.com/ministryofjutice/cloud-platform-test-cluster-reminder/handlers"
+	"github.com/ministryofjutice/cloud-platform-test-cluster-reminder/utils"
 )
 
-type SlackRequestBody struct {
-	Text    string `json:"text"`
-	Channel string `json:"channel"`
-}
-
 func main() {
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("eu-west-2"),
-	})
+	ctx := context.Background()
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("eu-west-2"))
 
 	if err != nil {
-		log.Println("Error creating session,", err)
+		log.Println("Error loading AWS config,", err)
 		return
 	}
 
-	svc := eks.New(sess)
-
-	webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
-	if webhookURL == "" {
-		log.Println("Error: SLACK_WEBHOOK_URL environment variable not set")
-		return
+	svc := eks.NewFromConfig(cfg)
+	accountName, err := handlers.GetAWSAccountName(ctx, cfg)
+	if err != nil {
+		log.Println("Error getting AWS account name,", err)
+		accountName = "unknown-account"
 	}
 
-	slackChannel := os.Getenv("SLACK_CHANNEL")
-	if slackChannel == "" {
-		log.Println("Error: SLACK_CHANNEL environment variable not set")
-		return
-	}
+	// webhookURL := os.Getenv("SLACK_WEBHOOK_URL")
+	// if webhookURL == "" {
+	// 	log.Println("Error: SLACK_WEBHOOK_URL environment variable not set")
+	// 	return
+	// }
 
-	result, err := svc.ListClusters(nil)
+	// slackChannel := os.Getenv("SLACK_CHANNEL")
+	// if slackChannel == "" {
+	// 	log.Println("Error: SLACK_CHANNEL environment variable not set")
+	// 	return
+	// }
+
+	result, err := svc.ListClusters(ctx, &eks.ListClustersInput{})
 	if err != nil {
 		log.Println("Error listing clusters,", err)
 		return
 	}
 
+	accountClusters := []string{"cloud-platform-development", "cloud-platform-preproduction", "cloud-platform-nonlive", "cloud-platform-live"}
+
 	for i := len(result.Clusters) - 1; i >= 0; i-- {
-		if strings.Contains(*result.Clusters[i], "live") || strings.Contains(*result.Clusters[i], "manager") {
+		if utils.HasAnyPrefix(result.Clusters[i], accountClusters) {
 			result.Clusters = append(result.Clusters[:i], result.Clusters[i+1:]...)
 		}
 	}
@@ -61,40 +57,19 @@ func main() {
 
 	var clustersString string
 	for _, cluster := range result.Clusters {
-		clustersString += *cluster + "\n"
+		clustersString += cluster + "\n"
 	}
 
 	if clustersString == "" {
 		clustersString = openEmoji + " *Yay, there are no test clusters to cleanup!*  " + closeEmoji
 	} else {
-		clustersString = openEmoji + " *Friday test cluster cleanup reminder!* " + closeEmoji + " \n \n Please delete your test clusters before signing off for the weekend! \n ```" + clustersString + "```"
+		clustersString = openEmoji + " *Friday test cluster cleanup reminder!* " + closeEmoji + " \n \n Please delete your test clusters before signing off for the weekend! \n ```" + accountName + "\n" + clustersString + "```"
 	}
 
-	err = SendSlackNotification(webhookURL, clustersString, slackChannel)
-	if err != nil {
-		log.Println("Error sending slack notification,", err)
-	}
-}
+	log.Println(clustersString)
 
-func SendSlackNotification(webhookUrl string, msg string, channel string) error {
-	slackBody, _ := json.Marshal(SlackRequestBody{Text: msg, Channel: channel})
-	req, err := http.NewRequest(http.MethodPost, webhookUrl, bytes.NewBuffer(slackBody))
-	if err != nil {
-		return err
-	}
-
-	req.Header.Add("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(resp.Body)
-	if buf.String() != "ok" {
-		return errors.New("non-ok response returned from slack")
-	}
-	return nil
+	// err = handlers.SendSlackNotification(webhookURL, clustersString, slackChannel)
+	// if err != nil {
+	// 	log.Println("Error sending slack notification,", err)
+	// }
 }
